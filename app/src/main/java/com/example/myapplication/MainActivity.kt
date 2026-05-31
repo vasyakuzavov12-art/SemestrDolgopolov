@@ -23,7 +23,6 @@ class MainActivity : ComponentActivity() {
                     val database = AppDatabase.getInstance(this)
                     var isLoggedIn by remember { mutableStateOf(false) }
 
-                    // Проверяем статус входа
                     LaunchedEffect(Unit) {
                         database.userDao().getCurrentUser().collect { user ->
                             isLoggedIn = user != null
