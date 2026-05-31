@@ -207,13 +207,11 @@ fun GameDetailScreen(gameId: Int, onBack: () -> Unit) {
                         Button(onClick = onBack) { Text("Назад") }
                     }
                 else ->
-                    // Используем LazyColumn вместо Column + verticalScroll
                     LazyColumn(
                         modifier = Modifier.fillMaxSize(),
                         contentPadding = PaddingValues(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        // Картинка
                         item {
                             if (uiState.gameImage != null) {
                                 AsyncImage(
@@ -226,32 +224,27 @@ fun GameDetailScreen(gameId: Int, onBack: () -> Unit) {
                             }
                         }
 
-                        // Название
                         item {
                             Text(uiState.gameName, style = MaterialTheme.typography.headlineMedium)
                         }
 
-                        // Жанры
                         if (uiState.genres.isNotEmpty() && uiState.genres != "Не указан") {
                             item {
                                 Text("🎮 Жанр: ${uiState.genres}", style = MaterialTheme.typography.titleSmall)
                             }
                         }
 
-                        // Описание
                         item {
                             Text("📝 Описание:", style = MaterialTheme.typography.titleMedium)
                             Text(uiState.gameDescription, style = MaterialTheme.typography.bodyMedium)
                         }
 
-                        // Детали
                         item {
                             Text("👨‍💻 Разработчик: ${uiState.developers}", style = MaterialTheme.typography.bodySmall)
                             Text("🏢 Издатель: ${uiState.publishers}", style = MaterialTheme.typography.bodySmall)
                             Text("📅 Дата релиза: ${uiState.releaseDate}", style = MaterialTheme.typography.bodySmall)
                         }
 
-                        // Кнопка Steam
                         item {
                             Button(
                                 onClick = {
@@ -264,7 +257,6 @@ fun GameDetailScreen(gameId: Int, onBack: () -> Unit) {
                             }
                         }
 
-                        // === СЕКЦИЯ КОММЕНТАРИЕВ ===
                         item {
                             Spacer(modifier = Modifier.height(8.dp))
                             Text(
@@ -273,7 +265,6 @@ fun GameDetailScreen(gameId: Int, onBack: () -> Unit) {
                             )
                         }
 
-                        // Поле для нового комментария
                         item {
                             OutlinedTextField(
                                 value = uiState.newCommentText,
@@ -295,7 +286,6 @@ fun GameDetailScreen(gameId: Int, onBack: () -> Unit) {
                             }
                         }
 
-                        // Список комментариев
                         if (uiState.comments.isEmpty()) {
                             item {
                                 Card(
