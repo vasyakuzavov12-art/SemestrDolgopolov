@@ -153,7 +153,6 @@ fun ProfileScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (!uiState.isLoggedIn) {
-                // Гостевой режим
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(4.dp)
@@ -180,7 +179,6 @@ fun ProfileScreen(
                     }
                 }
             } else {
-                // Авторизованный пользователь
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(4.dp)
