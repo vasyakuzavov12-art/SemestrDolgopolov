@@ -8,8 +8,8 @@ data class UserEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     val username: String,
-    val passwordHash: String,  // Для простоты - в реальном проекте хэшируй
-    val steamId: String? = null,  // Привязанный Steam ID
+    val passwordHash: String,
+    val steamId: String? = null, 
     val steamName: String? = null,
     val isLoggedIn: Boolean = false
 )
