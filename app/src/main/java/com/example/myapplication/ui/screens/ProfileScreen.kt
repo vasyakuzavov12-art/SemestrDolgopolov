@@ -1,8 +1,6 @@
 package com.example.myapplication.ui.screens
 
 import android.content.Context
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -11,25 +9,24 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.example.myapplication.database.AppDatabase
-import com.example.myapplication.database.UserEntity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
-import java.util.regex.Pattern
 
 data class ProfileUiState(
     val username: String = "",
     val isLoggedIn: Boolean = false,
     val steamId: String? = null,
-    val isLinkingSteam: Boolean = false,
+    val showSteamInputDialog: Boolean = false,
+    val tempSteamId: String = "",
     val errorMessage: String? = null,
     val successMessage: String? = null
 )
@@ -54,44 +51,52 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
                         steamId = user.steamId
                     )
                 } else {
-                    _uiState.value = _uiState.value.copy(
-                        isLoggedIn = false,
-                        username = ""
-                    )
+                    _uiState.value = _uiState.value.copy(isLoggedIn = false)
                 }
             }
         }
     }
 
-    fun startSteamLinking() {
-        _uiState.value = _uiState.value.copy(isLinkingSteam = true, errorMessage = null)
+    fun showSteamInputDialog() {
+        _uiState.value = _uiState.value.copy(
+            showSteamInputDialog = true,
+            tempSteamId = _uiState.value.steamId ?: "",
+            errorMessage = null
+        )
     }
 
-    fun extractSteamId(claimedId: String): String? {
-        val pattern = Pattern.compile("https://steamcommunity.com/openid/id/(\\d+)")
-        val matcher = pattern.matcher(claimedId)
-        return if (matcher.find()) matcher.group(1) else null
+    fun updateTempSteamId(value: String) {
+        _uiState.value = _uiState.value.copy(tempSteamId = value)
     }
 
-    fun saveSteamId(steamId: String) {
+    fun saveSteamId() {
+        val steamId = _uiState.value.tempSteamId.trim()
+
+        if (steamId.isEmpty()) {
+            _uiState.value = _uiState.value.copy(errorMessage = "Введите Steam ID")
+            return
+        }
+
+        if (!steamId.matches(Regex("^\\d+$"))) {
+            _uiState.value = _uiState.value.copy(errorMessage = "Steam ID должен содержать только цифры")
+            return
+        }
+
         viewModelScope.launch {
             try {
-                val user = database.userDao().getCurrentUser().collect { user ->
-                    user?.let {
-                        val updatedUser = it.copy(steamId = steamId, steamName = "Steam User")
-                        database.userDao().updateUser(updatedUser)
-                        _uiState.value = _uiState.value.copy(
-                            steamId = steamId,
-                            isLinkingSteam = false,
-                            successMessage = "Steam аккаунт привязан!"
-                        )
-                    }
+                val user = database.userDao().getCurrentUser().first()
+                if (user != null) {
+                    val updatedUser = user.copy(steamId = steamId, steamName = "Steam User")
+                    database.userDao().updateUser(updatedUser)
+                    _uiState.value = _uiState.value.copy(
+                        steamId = steamId,
+                        showSteamInputDialog = false,
+                        tempSteamId = "",
+                        successMessage = "Steam ID сохранён!"
+                    )
                 }
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(
-                    isLinkingSteam = false,
-                    errorMessage = "Ошибка привязки: ${e.message}"
-                )
+                _uiState.value = _uiState.value.copy(errorMessage = "Ошибка сохранения: ${e.message}")
             }
         }
     }
@@ -106,6 +111,10 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
             _uiState.value = _uiState.value.copy(isLoggedIn = false, username = "", steamId = null)
             onLogout()
         }
+    }
+
+    fun closeDialog() {
+        _uiState.value = _uiState.value.copy(showSteamInputDialog = false, tempSteamId = "", errorMessage = null)
     }
 }
 
@@ -126,7 +135,6 @@ fun ProfileScreen(
     val factory = remember { ProfileViewModelFactory(context) }
     val viewModel: ProfileViewModel = viewModel(factory = factory)
     val uiState by viewModel.uiState.collectAsState()
-    var showWebView by remember { mutableStateOf(false) }
 
     LaunchedEffect(uiState.successMessage, uiState.errorMessage) {
         kotlinx.coroutines.delay(3000)
@@ -153,7 +161,6 @@ fun ProfileScreen(
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             if (!uiState.isLoggedIn) {
-                // Гостевой режим
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(4.dp)
@@ -163,24 +170,17 @@ fun ProfileScreen(
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.spacedBy(16.dp)
                     ) {
+                        Text("👋 Гость", style = MaterialTheme.typography.headlineMedium)
                         Text(
-                            text = "👋 Гость",
-                            style = MaterialTheme.typography.headlineMedium
-                        )
-                        Text(
-                            text = "Войдите или зарегистрируйтесь, чтобы:\n• Добавлять игры в избранное\n• Оставлять комментарии\n• Привязывать Steam аккаунт",
+                            "Войдите или зарегистрируйтесь, чтобы:\n• Добавлять игры в избранное\n• Оставлять комментарии\n• Привязывать Steam аккаунт",
                             style = MaterialTheme.typography.bodyMedium
                         )
-                        Button(
-                            onClick = onLoginClick,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
+                        Button(onClick = onLoginClick, modifier = Modifier.fillMaxWidth()) {
                             Text("🔐 Войти / Зарегистрироваться")
                         }
                     }
                 }
             } else {
-                // Авторизованный пользователь
                 Card(
                     modifier = Modifier.fillMaxWidth(),
                     elevation = CardDefaults.cardElevation(4.dp)
@@ -189,61 +189,37 @@ fun ProfileScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        Text(
-                            text = "👤 Имя: ${uiState.username}",
-                            style = MaterialTheme.typography.titleMedium
-                        )
-
+                        Text("👤 Имя: ${uiState.username}", style = MaterialTheme.typography.titleMedium)
                         Divider()
 
                         Text(
                             text = if (uiState.steamId != null)
-                                "✅ Steam ID: ${uiState.steamId?.take(10)}..."
+                                "✅ Steam ID: ${uiState.steamId}"
                             else
                                 "❌ Steam не привязан",
                             style = MaterialTheme.typography.bodyMedium
                         )
 
-                        if (uiState.steamId == null) {
-                            Button(
-                                onClick = { viewModel.startSteamLinking() },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text("🔗 Привязать Steam аккаунт")
-                            }
-                        } else {
-                            Text(
-                                text = "🔗 Steam аккаунт привязан!",
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                        Button(
+                            onClick = { viewModel.showSteamInputDialog() },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(if (uiState.steamId == null) "🔗 Привязать Steam ID" else "✏️ Изменить Steam ID")
                         }
 
                         if (uiState.errorMessage != null) {
-                            Text(
-                                text = "❌ ${uiState.errorMessage}",
-                                color = MaterialTheme.colorScheme.error
-                            )
+                            Text("❌ ${uiState.errorMessage}", color = MaterialTheme.colorScheme.error)
                         }
-
                         if (uiState.successMessage != null) {
-                            Text(
-                                text = "✅ ${uiState.successMessage}",
-                                color = MaterialTheme.colorScheme.primary
-                            )
+                            Text("✅ ${uiState.successMessage}", color = MaterialTheme.colorScheme.primary)
                         }
 
                         Spacer(modifier = Modifier.height(16.dp))
 
                         Button(
-                            onClick = {
-                                viewModel.logout {
-                                    onLogout()
-                                }
-                            },
+                            onClick = { viewModel.logout(onLogout) },
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.error
-                            )
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                         ) {
                             Text("🚪 Выйти из аккаунта")
                         }
@@ -253,60 +229,40 @@ fun ProfileScreen(
         }
     }
 
-    // WebView для привязки Steam
-    if (uiState.isLinkingSteam && showWebView) {
+    if (uiState.showSteamInputDialog) {
         AlertDialog(
-            onDismissRequest = {
-                showWebView = false
-                viewModel.clearMessages()
-            },
-            title = { Text("Привязка Steam") },
+            onDismissRequest = { viewModel.closeDialog() },
+            title = { Text("🔗 Привязка Steam ID") },
             text = {
-                AndroidView(
-                    factory = { ctx ->
-                        WebView(ctx).apply {
-                            settings.javaScriptEnabled = true
-                            webViewClient = object : WebViewClient() {
-                                override fun shouldOverrideUrlLoading(
-                                    view: WebView?,
-                                    url: String?
-                                ): Boolean {
-                                    if (url != null && url.startsWith("https://steamcommunity.com/openid/login")) {
-                                        return false
-                                    }
-                                    if (url != null && url.contains("steamcommunity.com/openid/id/")) {
-                                        val steamId = viewModel.extractSteamId(url)
-                                        if (steamId != null) {
-                                            viewModel.saveSteamId(steamId)
-                                            showWebView = false
-                                        }
-                                        return true
-                                    }
-                                    return false
-                                }
-                            }
-                            loadUrl("https://steamcommunity.com/openid/login?openid.ns=http://specs.openid.net/auth/2.0&openid.mode=checkid_setup&openid.return_to=http://localhost/steam&openid.realm=http://localhost")
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(400.dp)
-                )
+                Column {
+                    Text("Введите ваш Steam ID (число):")
+                    Spacer(modifier = Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = uiState.tempSteamId,
+                        onValueChange = { viewModel.updateTempSteamId(it) },
+                        label = { Text("Steam ID") },
+                        placeholder = { Text("Например: 76561197960435530") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = "Как найти Steam ID: Откройте профиль Steam в браузере → скопируйте URL → число в конце",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
             },
             confirmButton = {
-                TextButton(onClick = {
-                    showWebView = false
-                    viewModel.clearMessages()
-                }) {
+                TextButton(onClick = { viewModel.saveSteamId() }) {
+                    Text("Сохранить")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.closeDialog() }) {
                     Text("Отмена")
                 }
             }
         )
-    }
-
-    LaunchedEffect(uiState.isLinkingSteam) {
-        if (uiState.isLinkingSteam) {
-            showWebView = true
-        }
     }
 }

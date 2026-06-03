@@ -5,7 +5,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.FavoriteBorder
@@ -20,6 +19,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import retrofit2.Retrofit
@@ -41,12 +41,10 @@ data class GameUi(
 data class GameListUiState(
     val isLoading: Boolean = false,
     val games: List<GameUi> = emptyList(),
-    val allGames: List<SteamGameItem> = emptyList(),
     val searchQuery: String = "",
     val errorMessage: String? = null,
-    val isOfflineMode: Boolean = false,
+    val successMessage: String? = null,
     val showFavoritesOnly: Boolean = false,
-    val searchPerformed: Boolean = false,
     val currentUserId: Long = 0
 )
 
@@ -64,10 +62,21 @@ class GameListViewModel(private val context: Context) : ViewModel() {
     private val favoriteIds = mutableSetOf<Int>()
     private var currentUserId: Long = 0
 
+    private val searchTerms = listOf(
+        "game", "rpg", "action", "adventure", "indie",
+        "strategy", "simulation", "puzzle", "platformer",
+        "racing", "sports", "fighting", "horror"
+    )
+
+    private val excludeTerms = listOf(
+        "hentai", "anime", "dating", "simulator", "waifu",
+        "erotic", "mature", "nsfw", "sexual", "adult"
+    )
+
     init {
         loadCurrentUser()
         loadFavorites()
-        searchGames("game")
+        loadRandomGames()
     }
 
     private fun loadCurrentUser() {
@@ -109,7 +118,7 @@ class GameListViewModel(private val context: Context) : ViewModel() {
     fun toggleFavorite(game: GameUi) {
         viewModelScope.launch {
             if (currentUserId == 0L) {
-                _uiState.value = _uiState.value.copy(errorMessage = "Войдите в аккаунт, чтобы добавлять в избранное")
+                _uiState.value = _uiState.value.copy(errorMessage = "Войдите в аккаунт, чтобы добавлять в желаемое")
                 return@launch
             }
 
@@ -117,10 +126,16 @@ class GameListViewModel(private val context: Context) : ViewModel() {
                 val entity = FavoriteGameEntity(game.id, currentUserId, game.name, game.imageUrl, game.price)
                 database.favoriteGameDao().removeFromFavorites(entity)
                 favoriteIds.remove(game.id)
+                _uiState.value = _uiState.value.copy(successMessage = "🗑️ Удалено из избранного")
+                delay(2000)
+                _uiState.value = _uiState.value.copy(successMessage = null)
             } else {
                 val entity = FavoriteGameEntity(game.id, currentUserId, game.name, game.imageUrl, game.price)
                 database.favoriteGameDao().addToFavorites(entity)
                 favoriteIds.add(game.id)
+                _uiState.value = _uiState.value.copy(successMessage = "✅ Добавлено в избранное")
+                delay(2000)
+                _uiState.value = _uiState.value.copy(successMessage = null)
             }
             updateGamesWithFavorites()
         }
@@ -130,8 +145,8 @@ class GameListViewModel(private val context: Context) : ViewModel() {
         _uiState.value = _uiState.value.copy(showFavoritesOnly = !_uiState.value.showFavoritesOnly)
         if (_uiState.value.showFavoritesOnly) {
             loadFavoritesOnly()
-        } else if (_uiState.value.searchPerformed) {
-            searchGames(_uiState.value.searchQuery)
+        } else {
+            loadRandomGames()
         }
     }
 
@@ -150,27 +165,30 @@ class GameListViewModel(private val context: Context) : ViewModel() {
                         steamUrl = "https://store.steampowered.com/app/${it.id}",
                         isFavorite = true
                     )
-                },
-                searchPerformed = true
+                }
             )
         }
     }
 
-    fun searchGames(query: String) {
-        if (query.isBlank()) return
+    private fun isGameExcluded(gameName: String): Boolean {
+        val lowerName = gameName.lowercase()
+        return excludeTerms.any { lowerName.contains(it) }
+    }
 
+    fun loadRandomGames() {
         viewModelScope.launch {
-            _uiState.value = _uiState.value.copy(
-                isLoading = true,
-                errorMessage = null,
-                searchQuery = query,
-                searchPerformed = true
-            )
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
 
             try {
-                val response = api.searchGames(term = query, count = 50)
+                val randomTerm = searchTerms.shuffled().first()
+                val response = api.searchGames(term = randomTerm, count = 50)
 
-                val games = response.items.map { item ->
+                val filteredGames = response.items
+                    .filter { !isGameExcluded(it.displayName) }
+                    .shuffled()
+                    .take(30)
+
+                val games = filteredGames.map { item ->
                     GameUi(
                         id = item.id,
                         name = item.displayName,
@@ -184,7 +202,47 @@ class GameListViewModel(private val context: Context) : ViewModel() {
                 _uiState.value = _uiState.value.copy(
                     isLoading = false,
                     games = games,
-                    allGames = response.items,
+                    errorMessage = if (games.isEmpty()) "Не удалось загрузить игры" else null
+                )
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    errorMessage = "Ошибка: ${e.message}"
+                )
+            }
+        }
+    }
+
+    fun searchGames(query: String) {
+        if (query.isBlank()) {
+            loadRandomGames()
+            return
+        }
+
+        viewModelScope.launch {
+            _uiState.value = _uiState.value.copy(isLoading = true, errorMessage = null)
+
+            try {
+                val response = api.searchGames(term = query, count = 50)
+
+                val filteredGames = response.items
+                    .filter { !isGameExcluded(it.displayName) }
+                    .take(30)
+
+                val games = filteredGames.map { item ->
+                    GameUi(
+                        id = item.id,
+                        name = item.displayName,
+                        imageUrl = item.displayImage,
+                        price = item.formattedPrice,
+                        steamUrl = item.steamUrl,
+                        isFavorite = favoriteIds.contains(item.id)
+                    )
+                }
+
+                _uiState.value = _uiState.value.copy(
+                    isLoading = false,
+                    games = games,
                     errorMessage = if (games.isEmpty()) "Игры не найдены" else null
                 )
             } catch (e: Exception) {
@@ -199,8 +257,8 @@ class GameListViewModel(private val context: Context) : ViewModel() {
     fun refresh() {
         if (_uiState.value.showFavoritesOnly) {
             loadFavoritesOnly()
-        } else if (_uiState.value.searchQuery.isNotBlank()) {
-            searchGames(_uiState.value.searchQuery)
+        } else {
+            loadRandomGames()
         }
     }
 }
@@ -219,18 +277,12 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
     val viewModel: GameListViewModel = viewModel(factory = factory)
     val uiState by viewModel.uiState.collectAsState()
     val snackbarHostState = remember { SnackbarHostState() }
-    val listState = rememberLazyListState()
 
     var searchText by remember { mutableStateOf("") }
 
-    LaunchedEffect(uiState.errorMessage) {
+    LaunchedEffect(uiState.errorMessage, uiState.successMessage) {
         uiState.errorMessage?.let { snackbarHostState.showSnackbar(it) }
-    }
-
-    LaunchedEffect(uiState.isOfflineMode) {
-        if (uiState.isOfflineMode && uiState.games.isNotEmpty()) {
-            snackbarHostState.showSnackbar("📱 Офлайн-режим: показаны сохраненные игры")
-        }
+        uiState.successMessage?.let { snackbarHostState.showSnackbar(it) }
     }
 
     Scaffold(
@@ -272,7 +324,7 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
                         value = searchText,
                         onValueChange = { searchText = it },
                         modifier = Modifier.weight(1f),
-                        placeholder = { Text("🔍 Введите название игры...") },
+                        placeholder = { Text("🔍 Поиск игр...") },
                         leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
                         singleLine = true,
                         colors = TextFieldDefaults.colors(
@@ -282,9 +334,7 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
                     )
                     Button(
                         onClick = {
-                            if (searchText.isNotBlank()) {
-                                viewModel.searchGames(searchText)
-                            }
+                            viewModel.searchGames(searchText)
                         },
                         modifier = Modifier.padding(end = 8.dp)
                     ) {
@@ -293,14 +343,12 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
                 }
             }
 
-            if (uiState.searchPerformed) {
-                Text(
-                    text = "🔍 Результаты поиска: ${uiState.games.size}",
-                    modifier = Modifier.padding(horizontal = 16.dp),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary
-                )
-            }
+            Text(
+                text = "🎮 ${uiState.games.size} игр",
+                modifier = Modifier.padding(horizontal = 16.dp),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
 
             Box(modifier = Modifier.fillMaxSize()) {
                 when {
@@ -308,7 +356,7 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
                         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                             CircularProgressIndicator()
                             Spacer(modifier = Modifier.height(16.dp))
-                            Text("Поиск игр...")
+                            Text("Загрузка игр...")
                         }
 
                     uiState.errorMessage != null && uiState.games.isEmpty() ->
@@ -322,19 +370,18 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
                         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
                             Text("❤️ Нет игр в избранном")
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Добавляйте игры через сердечко", style = MaterialTheme.typography.bodySmall)
+                            Text("Добавляйте игры через кнопку в виде сердечка", style = MaterialTheme.typography.bodySmall)
                         }
 
-                    uiState.games.isEmpty() && uiState.searchPerformed ->
+                    uiState.games.isEmpty() ->
                         Column(modifier = Modifier.align(Alignment.Center), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Text("🎮 Ничего не найдено")
+                            Text("🎮 Нет игр")
                             Spacer(modifier = Modifier.height(8.dp))
-                            Text("Попробуйте другое название", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = { viewModel.refresh() }) { Text("Загрузить другие") }
                         }
 
                     else ->
                         LazyColumn(
-                            state = listState,
                             contentPadding = PaddingValues(16.dp),
                             verticalArrangement = Arrangement.spacedBy(12.dp)
                         ) {
@@ -377,7 +424,7 @@ fun GameListScreen(onGameClick: (Int) -> Unit, onProfileClick: () -> Unit) {
                                         IconButton(onClick = { viewModel.toggleFavorite(game) }) {
                                             Icon(
                                                 if (game.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                                                contentDescription = "Избранное",
+                                                contentDescription = "Добавить в избранное",
                                                 tint = if (game.isFavorite) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
                                             )
                                         }
